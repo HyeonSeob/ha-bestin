@@ -10,10 +10,7 @@ from homeassistant.components.climate.const import (
     HVACMode,
 )
 from homeassistant.components.fan import SERVICE_SET_PERCENTAGE
-from homeassistant.components.light import (
-    COLOR_MODE_BRIGHTNESS,
-    COLOR_MODE_COLOR_TEMP,
-)
+from homeassistant.components.light import ColorMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.const import ATTR_STATE, WIND_SPEED
@@ -51,7 +48,7 @@ class AsyncQueue:
     async def put(self, item):
         """Function to put data into the queue"""
         await self.queue.put(item)
-    
+
     async def get(self):
         """Function to get data from the queue (only retrieve, not delete)"""
         if not self.queue.empty():
@@ -59,13 +56,13 @@ class AsyncQueue:
             await self.queue.put(item)
             return item
         return None
-    
+
     async def delete(self):
         """Function to delete data from the queue"""
         if not self.queue.empty():
             return await self.queue.get()
         return None
-    
+
     async def size(self):
         """Function to return the size of the queue"""
         return self.queue.qsize()
@@ -75,11 +72,11 @@ class BestinController:
     """Controller for managing Bestin devices and communication."""
 
     def __init__(
-        self, 
+        self,
         hass: HomeAssistant,
         entry: ConfigEntry,
         entity_groups: dict[str, set[str]],
-        hub_id: str, 
+        hub_id: str,
         connection,
         add_device_callback: Callable,
     ) -> None:
@@ -92,7 +89,7 @@ class BestinController:
         self.add_device_callback = add_device_callback
         self.gateway_type: str = entry.data["gateway_mode"][0]
         self.room_to_command: dict[bytes] = entry.data["gateway_mode"][1]
-        
+
         self.devices: dict[str, DeviceProfile] = {}
         self.queue = AsyncQueue()
         self.tasks: list[asyncio.Task] = []
@@ -107,17 +104,19 @@ class BestinController:
         await asyncio.sleep(1)
 
     async def stop(self):
-        """Stop the controller tasks"""
-        if self.tasks:
-            for task in self.tasks:
-                task.cancel()
-            self.tasks = []
+        """Stop the controller tasks and wait until cancellation completes."""
+        tasks = self.tasks
+        self.tasks = []
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     @property
     def is_alive(self) -> bool:
         """Check if the connection is alive"""
         return self.connection.is_connected()
-    
+
     async def receive_data(self) -> bytes:
         """Receive data if the connection is alive"""
         if self.is_alive:
@@ -139,12 +138,12 @@ class BestinController:
             checksum ^= packet[i]
             checksum = (checksum + 1) & 0xFF
         return checksum
-    
+
     def verify_checksum(self, packet: bytes) -> bool:
         """Verify the checksum of a packet"""
         if len(packet) < 6:
             return False
-        
+
         checksum = 3
         for byte in packet[:-1]:
             checksum ^= byte
@@ -164,7 +163,7 @@ class BestinController:
         onoff_value = 0x01 if value else 0x00
         onoff_value2 = 0x04 if value else 0x00
         position_flag = 0x80 if value else 0x00
-        
+
         if aio_gateway:
             room_id_conv = 0x50 + room_id
             packet = self.make_common_packet(room_id_conv, 0x0A, 0x12, timestamp)
@@ -173,16 +172,16 @@ class BestinController:
         elif self.gateway_type == "Gen2":
             room_id_conv = 0x30 + room_id
             packet = self.make_common_packet(room_id_conv, 0x0E, 0x21, timestamp)
-            
+
             pos_id += 1
             onoff_value = 0x01 if value else 0x02
-            
+
             packet[5:13] = [
                 0x01, 0x00, pos_id, onoff_value, 0xFF, 0xFF, 0x00, 0xFF
             ]
             if not isinstance(value, bool):
                 packet[8] = 0xFF
-                if sub_type == COLOR_MODE_BRIGHTNESS:
+                if sub_type == ColorMode.BRIGHTNESS:
                     packet[9] = value
                 else:
                     packet[10] = value
@@ -194,7 +193,7 @@ class BestinController:
 
         packet[-1] = self.calculate_checksum(packet)
         return packet
-    
+
     def make_outlet_packet(
         self, timestamp: int, room_id: int, pos_id: int, sub_type: str | None, value: bool
     ) -> bytearray:
@@ -205,7 +204,7 @@ class BestinController:
         position_flag = 0x80 if value else 0x00
 
         if aio_gateway:
-            room_id_conv = 0x50 + room_id 
+            room_id_conv = 0x50 + room_id
             packet = self.make_common_packet(room_id_conv, 0x0C, 0x12, timestamp)
         elif self.gateway_type == "Gen2":
             room_id_conv = 0x30 + room_id
@@ -233,14 +232,14 @@ class BestinController:
 
         packet[-1] = self.calculate_checksum(packet)
         return packet
-    
+
     def make_thermostat_packet(
         self, timestamp: int, room_id: int, pos_id: int, sub_type: str, value: bool | float
     ) -> bytearray:
         """Create a packet for thermostat control"""
         packet = self.make_common_packet(0x28, 14, 0x12, timestamp)
         packet[5] = room_id & 0x0F
-        
+
         if sub_type == SERVICE_SET_TEMPERATURE:
             value_int = int(value)
             value_float = value - value_int
@@ -252,7 +251,7 @@ class BestinController:
 
         packet[-1] = self.calculate_checksum(packet)
         return packet
-    
+
     def make_gas_packet(
         self, timestamp: int, room_id: int, pos_id: int, sub_type: str, value: bool
     ) -> bytearray:
@@ -262,7 +261,7 @@ class BestinController:
         )
         packet[-1] = self.calculate_checksum(packet)
         return packet
-    
+
     def make_doorlock_packet(
         self, timestamp: int, room_id: int, pos_id: int, sub_type: str, value: bool
     ) -> bytearray:
@@ -293,7 +292,7 @@ class BestinController:
 
         packet[-1] = self.calculate_checksum(packet)
         return packet
-    
+
     @callback
     async def enqueue_command(self, device_id: str, value: Any, **kwargs: dict | None):
         """Enqueue a command for a device"""
@@ -302,7 +301,7 @@ class BestinController:
         room_id = int(parts[2])
         pos_id = 0
         sub_type = None
-        
+
         if kwargs:
             sub_type, value = next(iter(kwargs.items()))
         if len(parts) == 4 and not parts[3].isdigit():
@@ -326,11 +325,11 @@ class BestinController:
         }
         LOGGER.debug(f"Create queue task: {queue_task}")
         await self.queue.put(queue_task)
-    
+
     def initial_device(self, device_id: str, sub_id: str | None, state: Any) -> dict:
         """Initialize a device"""
         device_type, device_room = device_id.split("_")
-    
+
         did_suffix = f"_{sub_id}" if sub_id else ""
         device_id = f"{BRAND_PREFIX}_{device_id}{did_suffix}"
         if sub_id:
@@ -338,10 +337,10 @@ class BestinController:
             device_name = f"{device_type} {device_room} {' '.join(sub_id_parts)}".title()
         else:
             device_name = f"{device_type} {device_room}".title()
-        
+
         if device_type not in ["energy"] and sub_id and not sub_id.isdigit():
             device_type = f"{device_type}:{''.join(filter(str.isalpha, sub_id))}"
-        
+
         if device_type not in MAIN_DEVICES:
             uid_suffix = f"-{self.hub_id}"
         else:
@@ -363,7 +362,7 @@ class BestinController:
                 info=device_info,
             )
         return self.devices[device_id]
-    
+
     def set_device(self, device_id: str, state: Any, is_sub: bool = False):
         """Set the state of a device"""
         device_type, device_room = device_id.split("_")
@@ -371,7 +370,7 @@ class BestinController:
         if device_type not in DEVICE_PLATFORM_MAP:
             LOGGER.error(f"Unsupported device type '{device_type}' in '{device_room}'")
             return
-        
+
         sub_states = state.items() if is_sub else [(None, state)]
         for sub_id, sub_state in sub_states:
             device = self.initial_device(device_id, sub_id, sub_state)
@@ -381,7 +380,7 @@ class BestinController:
                 device_platform = DEVICE_PLATFORM_MAP[format_device]
             else:
                 device_platform = DEVICE_PLATFORM_MAP[device_type]
-            
+
             device_uid = device.unique_id
             device_info = device.info
             if device_uid not in self.entity_groups.get(device_platform, []):
@@ -401,10 +400,10 @@ class BestinController:
     ) -> bytearray:
         """Create a common packet structure"""
         packet = bytearray([
-            0x02, 
-            header & 0xFF, 
-            length & 0xFF, 
-            packet_type & 0xFF, 
+            0x02,
+            header & 0xFF,
+            length & 0xFF,
+            packet_type & 0xFF,
             timestamp & 0xFF
         ])
         packet.extend(bytearray([0] * (length - 5)))
@@ -424,19 +423,19 @@ class BestinController:
             ATTR_CURRENT_TEMPERATURE: current_temperature
         }
         return room_id, thermostat_state
-    
+
     def parse_gas(self, packet: bytearray) -> tuple[int, bool]:
         """Parse gas data from a packet"""
         room_id = 0
         gas_state = bool(packet[5])
         return room_id, gas_state
-    
+
     def parse_doorlock(self, packet: bytearray) -> tuple[bool, int]:
         """Parse doorlock data from a packet"""
         room_id = 0
         doorlock_state = bool(packet[5] & 0xAE)
         return room_id, doorlock_state
-    
+
     def parse_fan(self, packet: bytearray) -> tuple[dict, int]:
         """Parse fan data from a packet"""
         room_id = 0
@@ -451,11 +450,11 @@ class BestinController:
             ATTR_PRESET_MODE: preset_mode,
         }
         return room_id, fan_state
-    
+
     def parse_state_general(self, packet: bytearray) -> tuple[dict, int]:
         """Parse general state data from a packet"""
         state_general = {"light": {}, "outlet": {}}
-        
+
         room_id = packet[5] & 0x0F
         if room_id == 1:
             iterations = (4, 3)
@@ -468,7 +467,7 @@ class BestinController:
             state_general["light"][str(i)] = light_state
             state_general["light"][f"dcvalue"] = dc_value
 
-        for i in range(iterations[1]): 
+        for i in range(iterations[1]):
             idx = 14 + 2 * i
             idx2 = idx + 2
 
@@ -477,7 +476,7 @@ class BestinController:
                 power_cons = value / 10.
             else:
                 power_cons = 0.
-            
+
             if i < 2:
                 idx = 8 + 2 * i
                 idx2 = idx + 2
@@ -493,7 +492,7 @@ class BestinController:
             state_general["outlet"][f"powercons_{str(i)}"] = power_cons
 
         return room_id, state_general
-    
+
     def parse_state_gen2(self, packet: bytearray) -> tuple[dict, int]:
         """Parse Gen2 state data from a packet"""
         state_gen2 = {"light": {}, "outlet": {}}
@@ -513,8 +512,8 @@ class BestinController:
             if brightness and color_temp:
                 state_gen2["light"][str(i)] = {
                     ATTR_STATE: packet[l_idx] == 0x01,
-                    COLOR_MODE_BRIGHTNESS: brightness,
-                    COLOR_MODE_COLOR_TEMP: color_temp,
+                    ColorMode.BRIGHTNESS: brightness,
+                    ColorMode.COLOR_TEMP: color_temp,
                 }
                 state_gen2["light"][f"dcvalue_{str(i)}"] = dc_value
             l_idx += 13
@@ -555,7 +554,7 @@ class BestinController:
             state_aio["outlet"][f"powercons_{str(i)}"] = power_cons
 
         return room_id, state_aio
-    
+
     def parse_energy(self, packet: bytearray) -> dict:
         """Parse energy data from a packet"""
         index = 13
@@ -563,7 +562,7 @@ class BestinController:
         element_offset = 1 if self.gateway_type == "AIO" or len(packet) == 34 else 0
 
         if element_offset == 1:
-            elements = ["electric", "water", "gas"] 
+            elements = ["electric", "water", "gas"]
         else:
             elements = ["electric", "water", "hotwater", "gas", "heat"]
 
@@ -621,7 +620,7 @@ class BestinController:
         header = packet[1]
         command = packet[2] if packet_len == 10 else packet[3]
         room_id = device_state = device_id = None
-        
+
         if packet_len >= 20 or packet_len in [7, 8]:
             self.timestamp = packet[4]
         elif packet_len == 10:
@@ -629,9 +628,10 @@ class BestinController:
 
         if packet_len != 10 and command in [0x81, 0x82, 0x91, 0x92, 0xB2]:
             if header == 0x28:
-                room_id, device_state = self.parse_thermostat(packet)
-                device_id = f"thermostat_{room_id}"
-                self.set_device(device_id, device_state)
+                if packet[2] == 0x10:
+                    room_id, device_state = self.parse_thermostat(packet)
+                    device_id = f"thermostat_{room_id}"
+                    self.set_device(device_id, device_state)
             elif (
                 (self.gateway_type == "General" and packet_len == 30) or
                 (self.gateway_type == "AIO" and packet_len in [20, 22]) or
@@ -662,7 +662,7 @@ class BestinController:
         elif command not in [0x00, 0x11, 0x21, 0xA1]:
             pass
             #LOGGER.warning(f"Unknown device packet: {packet.hex()}")
-    
+
     async def handle_packet_queue(self, queue: dict):
         """Handle a packet from the queue"""
         await self.send_packet_queue(queue)
@@ -686,12 +686,14 @@ class BestinController:
         """Process incoming data"""
         while True:
             if not self.is_alive:
-                await asyncio.sleep(5)
+                await self.connection.reconnect()
+                await asyncio.sleep(0.1)
                 continue
 
             try:
                 received_data = await self.receive_data()
                 if not received_data:
+                    await asyncio.sleep(0.1)
                     continue
 
                 checksum_valid = self.verify_checksum(received_data)
@@ -703,8 +705,11 @@ class BestinController:
                     if await self.queue.size() > 0:
                         queue_item = await self.queue.get()
                         self.validate_response(received_data, queue_item)
+            except asyncio.CancelledError:
+                raise
             except Exception as ex:
                 LOGGER.error(f"Failed to process incoming data: {ex}", exc_info=True)
+                await asyncio.sleep(0.1)
 
     def log_packet_viewer(self, data: bytes, checksum_valid: bool):
         """Log packet data for debugging"""
@@ -722,5 +727,8 @@ class BestinController:
                     await self.handle_packet_queue(queue_item)
                 else:
                     await asyncio.sleep(0.1)
+            except asyncio.CancelledError:
+                raise
             except Exception as ex:
                 LOGGER.error(f"Failed to process task queue: {ex}", exc_info=True)
+                await asyncio.sleep(0.1)

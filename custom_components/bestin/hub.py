@@ -32,7 +32,7 @@ from .until import check_ip_or_serial
 
 class ConnectionManager:
     """Handles hub connections."""
-    
+
     def __init__(self, conn_str: str) -> None:
         """Initialize the ConnectionManager."""
         self.conn_str = conn_str
@@ -43,6 +43,7 @@ class ConnectionManager:
         self.reconnect_attempts: int = 0
         self.last_reconnect_attempt: float = None
         self.next_attempt_time: float = None
+        self._reconnect_lock = asyncio.Lock()
 
         self.chunk_size = 64
         self.constant_packet_length = 10
@@ -57,18 +58,19 @@ class ConnectionManager:
         else:
             raise ValueError("Invalid connection string")
 
-    async def connect(self, timeout: int = 5) -> None:
-        """Establish a connection."""
-        try:
-            if self.is_serial:
-                await self._connect_serial()
-            elif self.is_socket:
-                await self._connect_socket()
-            self.reconnect_attempts = 0
-            LOGGER.info("Connection established successfully.")
-        except Exception as e:
-            LOGGER.error(f"Connection failed: {e}")
-            await self.reconnect()
+    async def connect(self, timeout: int = 5, *, reset_backoff: bool = True) -> bool:
+        """Make one bounded connection attempt without recursive retries."""
+        if self.is_serial:
+            await asyncio.wait_for(self._connect_serial(), timeout=timeout)
+        elif self.is_socket:
+            await asyncio.wait_for(self._connect_socket(), timeout=timeout)
+        else:
+            return False
+
+        if reset_backoff:
+            self._reset_backoff()
+        LOGGER.info("Connection established successfully.")
+        return True
 
     async def _connect_serial(self) -> None:
         """Establish a serial connection."""
@@ -84,37 +86,76 @@ class ConnectionManager:
         LOGGER.info(f"Socket connection established to {host}:{port}")
 
     def is_connected(self) -> bool:
-        """Check if the connection is active."""
+        """Check whether both sides of the active transport are usable."""
         try:
             if self.is_serial:
-                return self.writer is not None and not self.writer.transport.is_closing()
-            elif self.is_socket:
-                return self.writer is not None
+                return (
+                    self.writer is not None
+                    and not self.writer.transport.is_closing()
+                )
+            if self.is_socket:
+                return (
+                    self.reader is not None
+                    and self.writer is not None
+                    and not self.reader.at_eof()
+                    and not self.writer.is_closing()
+                )
         except Exception:
             return False
+        return False
 
-    async def reconnect(self) -> bool | None:
-        """Attempt to reconnect with exponential backoff."""
-        if self.writer is not None:
-            self.writer.close()
-            await self.writer.wait_closed()
+    def _reset_backoff(self) -> None:
+        self.reconnect_attempts = 0
+        self.last_reconnect_attempt = None
+        self.next_attempt_time = None
 
-        current_time = time.time()
-        if self.next_attempt_time and current_time < self.next_attempt_time:
-            return False
-        
-        self.reconnect_attempts += 1
-        delay = min(2 ** self.reconnect_attempts, 60) if self.last_reconnect_attempt else 1
-        self.last_reconnect_attempt = current_time
-        self.next_attempt_time = current_time + delay
-        LOGGER.info(f"Reconnection attempt {self.reconnect_attempts} after {delay} seconds delay...")
+    async def _disconnect(self) -> None:
+        writer = self.writer
+        self.reader = None
+        self.writer = None
+        if writer is None:
+            return
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
 
-        await asyncio.sleep(delay)
-        await self.connect()
-        if self.is_connected():
-            LOGGER.info(f"Successfully reconnected on attempt {self.reconnect_attempts}.")
-            self.reconnect_attempts = 0
-            self.next_attempt_time = None
+    async def reconnect(self, failed_writer=None) -> bool:
+        """Attempt one reconnect with bounded, single-flight backoff."""
+        async with self._reconnect_lock:
+            if failed_writer is None and self.is_connected():
+                return True
+            if (
+                failed_writer is not None
+                and self.writer is not failed_writer
+                and self.is_connected()
+            ):
+                return True
+
+            await self._disconnect()
+            self.reconnect_attempts += 1
+            delay = min(2 ** (self.reconnect_attempts - 1), 60)
+            self.last_reconnect_attempt = time.monotonic()
+            self.next_attempt_time = self.last_reconnect_attempt + delay
+            LOGGER.info(
+                "Reconnection attempt %d after %d seconds delay...",
+                self.reconnect_attempts,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            try:
+                await self.connect(reset_backoff=False)
+            except asyncio.CancelledError:
+                raise
+            except Exception as ex:
+                LOGGER.error("Reconnection attempt failed: %s", ex)
+                return False
+
+            attempt = self.reconnect_attempts
+            self._reset_backoff()
+            LOGGER.info("Successfully reconnected on attempt %d.", attempt)
+            return True
 
     async def send(self, packet: bytearray, interval: int) -> None:
         """Send a packet."""
@@ -127,22 +168,24 @@ class ConnectionManager:
             await self.reconnect()
 
     async def receive(self, size: int = 64) -> bytes | None:
-        """Receive data."""
+        """Receive data and reconnect when the active transport fails."""
+        failed_writer = self.writer
         try:
-            if self.chunk_size == size: 
+            if self.chunk_size == size:
                 return await self._receive_socket()
-            else:
-                return await self.reader.read(size)
+            return await self.reader.read(size)
+        except asyncio.CancelledError:
+            raise
         except asyncio.TimeoutError:
-            pass
-        except Exception as e:
-            LOGGER.error(f"Failed to receive packet data: {e}")
-            await self.reconnect()
+            return None
+        except Exception as ex:
+            LOGGER.error("Failed to receive packet data: %s", ex)
+            await self.reconnect(failed_writer)
             return None
 
     async def _receive_socket(self) -> bytes:
         """Receive data from a socket connection."""
-        
+
         async def recv_exactly(n):
             data = b''
             while len(data) < n:
@@ -158,15 +201,15 @@ class ConnectionManager:
                 while True:
                     initial_data = await self.reader.read(1)
                     if not initial_data:
-                        return b''
+                        raise ConnectionResetError("Connection closed by peer")
                     packet += initial_data
                     if 0x02 in packet:
                         start_index = packet.index(0x02)
                         packet = packet[start_index:]
                         break
-                
+
                 packet += await recv_exactly(3 - len(packet))
-                
+
                 if (
                     packet[1] not in [0x28, 0x31, 0x41, 0x42, 0x61, 0xD1]
                     and packet[1] & 0xF0 != 0x50   # For AIO (0x51-0x55)
@@ -175,36 +218,33 @@ class ConnectionManager:
                     return b''
 
                 if (
-                    (packet[1] == 0x31 and packet[2] in [0x00, 0x02, 0x80, 0x82])
+                    (packet[1] == 0x31 and packet[2] in [0x00, 0x01, 0x02, 0x80, 0x81, 0x82])
                     or packet[1] == 0x61
                     or packet[1] == 0x17  # For AIO
                 ):
                     packet_length = self.constant_packet_length
                 else:
                     packet_length = packet[2]
-                
+
                 if packet_length <= 0:
                     #LOGGER.error(f"Invalid packet length in packet: {packet.hex()}")
                     return b''
 
                 packet += await recv_exactly(packet_length - len(packet))
-                
+
                 if len(packet) >= packet_length:
                     return packet[:packet_length]
 
-        except socket.error as e:
-            LOGGER.error(f"Socket error: {e}")
-            await self.reconnect()
-        
+        except socket.error:
+            raise
+
         return b''
-    
+
     async def close(self) -> None:
-        """Close the connection."""
-        if self.writer:
-            LOGGER.info("Connection closed.")
-            self.writer.close()
-            await self.writer.wait_closed()
-            self.writer = None
+        """Close the connection and clear reconnect state."""
+        LOGGER.info("Connection closed.")
+        await self._disconnect()
+        self._reset_backoff()
 
 
 class BestinHub:
@@ -239,14 +279,14 @@ class BestinHub:
     def gw_type(self) -> str:
         """Get the gateway type."""
         return cast(str, self.gateway_mode[0])
-    
+
     @property
     def available(self) -> bool:
         """Check if the hub is available."""
         if self.connection:
             return self.connection.is_connected()
         return True
-    
+
     @property
     def model(self) -> str:
         """Get the model of the hub."""
@@ -256,7 +296,7 @@ class BestinHub:
     def name(self) -> str:
         """Get the name of the hub."""
         return NAME
-    
+
     @property
     def sw_version(self) -> str:
         """Get the software version of the hub."""
@@ -268,7 +308,7 @@ class BestinHub:
         if CONF_USERNAME in self.entry.data:
             return SMART_HOME_1
         return SMART_HOME_2
-    
+
     @property
     def is_polling(self) -> bool:
         """Check if the hub is in polling mode."""
@@ -291,7 +331,7 @@ class BestinHub:
         if not re.match(r"/dev/tty(USB|AMA)\d+", host):
             return f"{host}:{str(getattr(self, CONF_PORT, port))}"
         return host
-    
+
     async def determine_gateway_mode(self) -> None:
         """Determine the gateway mode."""
         chunk_storage: list = []
@@ -306,7 +346,7 @@ class BestinHub:
 
             for chunk in chunk_storage:
                 if len(chunk) < 4:
-                    raise ValueError(f"Chunk length is too short: length={len(chunk)}, chunk={chunk.hex()}")     
+                    raise ValueError(f"Chunk length is too short: length={len(chunk)}, chunk={chunk.hex()}")
                 chunk_length = chunk[2]
                 room_byte = chunk[1]
                 command_byte = chunk[3]
@@ -356,13 +396,13 @@ class BestinHub:
         domain = device.domain
         unique_id = device.unique_id
         device_info = device.info
-        
+
         if (
             unique_id in self.entity_groups.get(domain, set()) or
             device_info.device_id in self.entity_to_id
         ):
             return
-        
+
         args = []
         if device is not None and not isinstance(device, list):
             args.append([device])
@@ -372,7 +412,7 @@ class BestinHub:
             self.async_signal_new_device(device_type),
             *args,
         )
-    
+
     async def connect(self, host: str = None, port: int = None) -> bool:
         """Connect to the hub."""
         if not self.connection or not self.available:
@@ -382,12 +422,12 @@ class BestinHub:
 
         await self.connection.connect()
         return self.available
-    
+
     async def async_close(self) -> None:
         """Close the hub connection."""
         if self.api:
             await self.api.stop()
-        if self.connection and self.available:
+        if self.connection:
             await self.connection.close()
         if self.gateway_mode:
             self.gateway_mode = None
@@ -397,11 +437,11 @@ class BestinHub:
         """Shutdown the hub."""
         if self.api:
             await self.api.stop()
-        if self.connection and self.available:
+        if self.connection:
             await self.connection.close()
         if self.gateway_mode:
             self.gateway_mode = None
-    
+
     async def async_initialize_serial(self) -> None:
         """Initialize the serial connection."""
         try:

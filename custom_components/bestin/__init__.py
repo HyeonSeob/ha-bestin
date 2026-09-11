@@ -20,17 +20,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if CONF_SESSION not in entry.data:
         try:
             await asyncio.wait_for(hub.connect(), timeout=5)
-        except asyncio.TimeoutError as ex:
+        except (asyncio.TimeoutError, OSError, ConnectionError) as ex:
             await hub.async_close()
             hass.data[DOMAIN].pop(entry.entry_id)
-            raise ConfigEntryNotReady(f"Connection to {hub.hub_id} timed out.") from ex
+            raise ConfigEntryNotReady(f"Connection to {hub.hub_id} failed.") from ex
 
         LOGGER.info("Start serial initialization.")
         await hub.async_initialize_serial()
     else:
         LOGGER.info("Start center initialization.")
         await hub.async_initialize_center()
-    
+
     entry.async_on_unload(
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, hub.shutdown)
     )
@@ -53,5 +53,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ):
         hub: BestinHub = hass.data[DOMAIN].pop(entry.entry_id)
         await hub.async_close()
-    
+
     return unload_ok

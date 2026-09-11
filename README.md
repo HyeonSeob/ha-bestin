@@ -4,18 +4,18 @@
 BESTIN 월패드 1.0/2.0 사용자들을 위한 통합
 
 ## 기여
-문제가 있나요? [Issues](https://github.com/lunDreame/ha-bestin/issues) 탭에 작성해 주세요.
+문제가 있나요? [Issues](https://github.com/HyeonSeob/ha-bestin/issues) 탭에 작성해 주세요.
 
 - 테스트 중이며, 다양한 환경에서의 테스트 케이스가 필요합니다.
 - 월패드 버전 3.0의 테스트 되지 않았으며 확인이 필요합니다. 도움이 필요하신 분은 이슈 및 디버깅 탭에 메일 주소로 연락 주세요.
 - 시리얼 통신의 경우 테스트 되지 않았습니다.
-- 더 좋은 아이디어가 있나요? [Pull requests](https://github.com/lunDreame/ha-bestin/pulls)로 공유해 주세요!
+- 더 좋은 아이디어가 있나요? [Pull requests](https://github.com/HyeonSeob/ha-bestin/pulls)로 공유해 주세요!
 - 이 통합을 사용하면서 발생하는 문제에 대해서는 책임지지 않습니다.
 
 도움이 되셨나요? [카카오페이](https://qr.kakaopay.com/FWDWOBBmR) [토스](https://toss.me/lundreamer)
 
 ## 설치
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=lunDreame&repository=ha-bestin&category=Integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=HyeonSeob&repository=ha-bestin&category=Integration)
 
 이 통합을 설치하려면 이 GitHub Repo를 HACS Custom Repositories에 추가하거나 위의 배지를 클릭하세요. 설치 후 HomeAssistant를 재부팅하세요.
 

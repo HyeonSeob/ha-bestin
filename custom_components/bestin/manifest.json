@@ -2,16 +2,16 @@
   "domain": "bestin",
   "name": "BESTIN",
   "codeowners": [
-    "@lunDreame"
+    "@HyeonSeob"
   ],
   "config_flow": true,
-  "documentation": "https://github.com/lunDreame/ha-bestin",
+  "documentation": "https://github.com/HyeonSeob/ha-bestin",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/lunDreame/ha-bestin/issues",
+  "issue_tracker": "https://github.com/HyeonSeob/ha-bestin/issues",
   "requirements": [
     "pyserial-asyncio",
     "aiofiles",
     "xmltodict"
   ],
-  "version": "1.1.9"
+  "version": "1.1.9-fix04"
 }
