@@ -7,7 +7,7 @@ from homeassistant.const import Platform
 
 DOMAIN = "bestin"
 NAME = "BESTIN"
-VERSION = "1.1.9-fix04"
+VERSION = "1.1.9-fix05"
 
 PLATFORMS: list[Platform] = [
     Platform.CLIMATE,
@@ -23,6 +23,17 @@ CONF_VERSION = "version"
 CONF_VERSION_1 = "version1.0"
 CONF_VERSION_2 = "version2.0"
 CONF_SESSION = "session"
+
+# Smart Home 2.0 단지 서버는 2026-11-17부터 공식 앱과 다른 요청을 401로 막는다.
+# 로그인에는 X-API-KEY 헤더와 본문 "V2"가, 모든 요청에는 실제 브라우저 User-Agent가 필요하다.
+# 값 출처: 공식 앱 상수(dlxmax/ha-bestin-fork v1.4.32~ 및 issue #11).
+V2_LOGIN_URL = "https://center.hdc-smart.com/v3/auth/login"
+V2_API_KEY = "ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5LmV5SnpaV055WlhRaU9pSXhNak0wTlRZM09Ea3dJaXdpYm1GdFpTSTZJbk50WVhKMGFHOXRaU0o5Ljk5YjBNYWtXUkNaSzhhVExkOW1XOFlXanR5VnNpd2k5NmNlWjNkYzZzWFk"
+V2_LOGIN_BODY = "V2"
+V2_USER_AGENT = (
+    "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36"
+)
 
 DEFAULT_PORT = 8899
 DEFAULT_MAX_SEND_RETRY = 10
