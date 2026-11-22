@@ -33,6 +33,10 @@ from homeassistant.const import (
 )
 
 from .const import (
+    V2_API_KEY,
+    V2_LOGIN_BODY,
+    V2_LOGIN_URL,
+    V2_USER_AGENT,
     LOGGER,
     BRAND_PREFIX,
     SMART_HOME_1,
@@ -79,15 +83,18 @@ class CenterAPIv2:
     
     async def _v2_refresh_session(self, args=None):
         """Refresh session for v2 API."""
-        url = "https://center.hdc-smart.com/v3/auth/login"
+        url = V2_LOGIN_URL
         headers = {
             "Content-Type": "application/json",
             "Authorization": self.entry.data[CONF_UUID],
-            "User-Agent": "Mozilla/5.0"
+            "X-API-KEY": V2_API_KEY,
+            "User-Agent": V2_USER_AGENT
         }
 
         try:
-            async with self.session.post(url=url, headers=headers, timeout=5) as response:
+            async with self.session.post(
+                url=url, headers=headers, data=V2_LOGIN_BODY, timeout=5
+            ) as response:
                 resp = await response.json()
 
                 if response.status != 200:
@@ -114,7 +121,7 @@ class CenterAPIv2:
         headers = {
             "Content-Type": "application/json",
             "Authorization": self.entry.data[CONF_UUID],
-            "User-Agent": "Mozilla/5.0"
+            "User-Agent": V2_USER_AGENT
         }
         data = {
             "address": self.entry.data[CONF_IP_ADDRESS],
@@ -139,7 +146,7 @@ class CenterAPIv2:
         """Fetch and process elevator status updates."""
         url = f"{self.entry.data[CONF_SESSION][CONF_URL]}/v2/admin/elevators/sse"
         try:
-            async with self.session.get(url) as response:
+            async with self.session.get(url, headers={"User-Agent": V2_USER_AGENT}) as response:
                 if response.status != 200:
                     LOGGER.error(f"Failed to fetch elevator status: {response.status}")
                     return
@@ -203,7 +210,7 @@ class CenterAPIv2:
         url = f"{self.entry.data[CONF_SESSION][CONF_URL]}/v2/api/features/{device_type}/{room_id}/apply"
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": V2_USER_AGENT,
             "access-token": self.entry.data[CONF_SESSION]["access-token"],
         }
         data = {"unit": unit, "state": value}
@@ -232,7 +239,7 @@ class CenterAPIv2:
         url = f"{self.entry.data[CONF_SESSION][CONF_URL]}/v2/api/features/{feature_name}/{room_id}/apply"
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": V2_USER_AGENT,
             "access-token": self.entry.data[CONF_SESSION]["access-token"],
         }
         
@@ -299,7 +306,7 @@ class CenterAPIv2:
         url = f"{self.entry.data[CONF_SESSION][CONF_URL]}/v2/api/features/apply"
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0",
+            "User-Agent": V2_USER_AGENT,
             "access-token": self.entry.data[CONF_SESSION]["access-token"],
         }
         
